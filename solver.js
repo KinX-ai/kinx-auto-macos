@@ -1,216 +1,188 @@
-/**
- * reCAPTCHA v3 Direct Token Solver
- * Lấy token reCAPTCHA v3 TRỰC TIẾP từ Google (không qua dịch vụ bên thứ 3)
- * Sử dụng Puppeteer để gọi grecaptcha.execute()
- */
-
-const puppeteer = require("puppeteer");
-const fs = require("fs");
-const path = require("path");
+const { BrowserWindow, session } = require("electron");
 
 class RecaptchaSolver {
   constructor() {
-    this.browser = null;
+    this.solverWindow = null;
   }
 
-  /**
-   * Tìm Chrome/Edge (Hỗ trợ cả Windows và macOS)
-   */
   findChrome() {
-    let possiblePaths = [];
-
-    // --- PHẦN SỬA ĐỔI: Kiểm tra hệ điều hành ---
-    if (process.platform === "darwin") {
-      // Đường dẫn cho macOS
-      possiblePaths = [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        path.join(process.env.HOME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-      ];
-    } else {
-      // Đường dẫn gốc cho Windows (Code cũ của bạn)
-      possiblePaths = [
-        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-        path.join(
-          process.env.LOCALAPPDATA || "", // Thêm || "" để tránh lỗi nếu biến môi trường này không tồn tại
-          "Google\\Chrome\\Application\\chrome.exe"
-        ),
-        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      ];
-    }
-    // ---------------------------------------------
-
-    for (const chromePath of possiblePaths) {
-      if (fs.existsSync(chromePath)) {
-        console.log("[ReCAPTCHA] Tìm thấy browser:", chromePath);
-        return chromePath;
-      }
-    }
-
-    throw new Error(
-      "Không tìm thấy Chrome hoặc Edge. Vui lòng cài đặt Chrome!"
-    );
+    return "Electron"; 
   }
 
-  /**
-   * Lấy token reCAPTCHA v3 trực tiếp
-   * @param {string} websiteURL - URL của website (VD: https://labs.google)
-   * @param {string} websiteKey - Site key của reCAPTCHA
-   * @param {string} pageAction - Action name (VD: FLOW_GENERATION)
-   * @returns {Promise<string>} reCAPTCHA token
-   */
-  async getRecaptchaToken(websiteURL, websiteKey, pageAction) {
-    let page = null;
+ 
+  async createSolverWindow(targetUrl) {
+    if (this.solverWindow && !this.solverWindow.isDestroyed()) {
+      this.solverWindow.destroy();
+    }
 
+    this.solverWindow = new BrowserWindow({
+      width: 1,
+      height: 1,
+      show: true, 
+      x: -9999,
+      y: -9999,
+      frame: false,
+      transparent: true,
+      hasShadow: false,
+      opacity: 0,
+      skipTaskbar: true, 
+      focusable: false,
+      movable: false,
+      resizable: false,
+      alwaysOnTop: true,
+      type: 'panel', 
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: false, 
+        session: session.defaultSession, 
+        webSecurity: false, 
+        backgroundThrottling: false,
+        devTools: false 
+      },
+    });
+
+    if (process.platform === 'darwin') {
+      this.solverWindow.setWindowButtonVisibility(false);
+    }
+    this.solverWindow.setIgnoreMouseEvents(true);
+
+    
+    this.solverWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      const responseHeaders = Object.assign({}, details.responseHeaders);
+     
+      if (responseHeaders['content-security-policy']) delete responseHeaders['content-security-policy'];
+      if (responseHeaders['x-frame-options']) delete responseHeaders['x-frame-options'];
+      callback({ responseHeaders, cancel: false });
+    });
+
+  
+    this.solverWindow.webContents.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    );
+
+
+    this.solverWindow.webContents.setAudioMuted(true);
+
+
+    await this.solverWindow.loadURL(targetUrl);
+  }
+
+ 
+  async simulateHumanInteraction() {
+    if (!this.solverWindow || this.solverWindow.isDestroyed()) return;
+    
+    const contents = this.solverWindow.webContents;
     try {
-      console.log("[ReCAPTCHA] Đang khởi động browser...");
+        // Human-like mouse movement with randomization
+        const startX = 10 + Math.floor(Math.random() * 50);
+        const startY = 10 + Math.floor(Math.random() * 50);
+        contents.sendInputEvent({ type: 'mouseEnter', x: startX, y: startY });
+        
+        const midX = 100 + Math.floor(Math.random() * 100);
+        const midY = 100 + Math.floor(Math.random() * 100);
+        contents.sendInputEvent({ type: 'mouseMove', x: midX, y: midY });
+        await new Promise(r => setTimeout(r, 100 + Math.random() * 200));
+        
+        const targetX = 200 + Math.floor(Math.random() * 50);
+        const targetY = 150 + Math.floor(Math.random() * 50);
+        contents.sendInputEvent({ type: 'mouseMove', x: targetX, y: targetY });
+        
+        // Random click duration
+        contents.sendInputEvent({ type: 'mouseDown', x: targetX, y: targetY, button: 'left', clickCount: 1 });
+        await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
+        contents.sendInputEvent({ type: 'mouseUp', x: targetX, y: targetY, button: 'left', clickCount: 1 });
+    } catch (e) {
+        // console.error("Interaction failed:", e);
+    }
+  }
 
-      // Khởi động browser
-      if (!this.browser) {
-        const executablePath = this.findChrome();
+  async getRecaptchaToken(websiteURL, websiteKey, pageAction) {
+    try {
+      
+      await this.createSolverWindow(websiteURL);
 
-        this.browser = await puppeteer.launch({
-          headless: false, // Hiển thị browser để debug, có thể đổi thành true
-          executablePath: executablePath,
-          args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-web-security",
-            "--start-minimized", // Thêm dòng này để thu nhỏ ngay lập tức
-            "--window-size=1,1", // Đặt kích thước cửa sổ siêu nhỏ (1x1 pixel)
-            "--window-position=-9999,-9999", // Đẩy cửa sổ ra khỏi phạm vi màn hình
-          ],
-        });
+      
+      await this.simulateHumanInteraction();
+
+      
+      const token = await this.solverWindow.webContents.executeJavaScript(`
+        (async function() {
+          const siteKey = '${websiteKey}';
+          const action = '${pageAction}';
+
+         
+          const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+         
+          async function ensureLibrary() {
+            // Masking common bot detection signals
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN', 'vi', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+
+            if (window.grecaptcha && window.grecaptcha.enterprise && window.grecaptcha.enterprise.execute) return;
+            
+            const old = document.getElementById('recaptcha-solver-script');
+            if (old) old.remove();
+
+            return new Promise((resolve, reject) => {
+              const script = document.createElement('script');
+              script.id = 'recaptcha-solver-script';
+              script.src = 'https://www.google.com/recaptcha/enterprise.js?render=' + siteKey;
+              script.onload = () => {
+                  setTimeout(resolve, 1000);
+              };
+              script.onerror = () => reject("Load script failed");
+              document.head.appendChild(script);
+            });
+          }
+
+          try {
+            await ensureLibrary();
+            
+            let attempts = 0;
+            while (!window.grecaptcha || !window.grecaptcha.enterprise || !window.grecaptcha.enterprise.execute) {
+                if (attempts++ > 20) throw new Error("Timeout waiting for grecaptcha enterprise");
+                await wait(200);
+            }
+
+            return new Promise((resolve, reject) => {
+               window.grecaptcha.enterprise.ready(() => {
+                  window.grecaptcha.enterprise.execute(siteKey, { action: action })
+                    .then(token => resolve(token))
+                    .catch(err => reject("Execute Error: " + err.message));
+               });
+            });
+
+          } catch (e) {
+            return "ERROR: " + e.message;
+          }
+        })();
+      `, true); 
+
+      
+      if (!token || typeof token !== 'string' || token.startsWith("ERROR:")) {
+         throw new Error("Token lỗi: " + token);
       }
 
-      page = await this.browser.newPage();
-
-      // Set user agent
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-      );
-
-      console.log("[ReCAPTCHA] Đang tải trang:", websiteURL);
-
-      // Tải trang website
-      await page.goto(websiteURL, {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
-
-      console.log("[ReCAPTCHA] Đang inject reCAPTCHA script...");
-
-      // Inject reCAPTCHA v3 script và lấy token
-      const token = await page.evaluate(
-        async (siteKey, action) => {
-          return new Promise((resolve, reject) => {
-            // Load reCAPTCHA API script
-            const script = document.createElement("script");
-            script.src = `https://www.google.com/recaptcha/api.js?render=${siteKey}`;
-
-            script.onload = () => {
-              console.log("[Browser] reCAPTCHA script loaded");
-
-              // Đợi grecaptcha ready
-              window.grecaptcha.ready(() => {
-                console.log("[Browser] grecaptcha ready, executing...");
-
-                // Execute reCAPTCHA
-                window.grecaptcha
-                  .execute(siteKey, { action: action })
-                  .then((token) => {
-                    console.log("[Browser] Token received!");
-                    resolve(token);
-                  })
-                  .catch((error) => {
-                    console.error("[Browser] Execute error:", error);
-                    reject(error);
-                  });
-              });
-            };
-
-            script.onerror = (error) => {
-              console.error("[Browser] Script load error:", error);
-              reject(new Error("Failed to load reCAPTCHA script"));
-            };
-
-            document.head.appendChild(script);
-          });
-        },
-        websiteKey,
-        pageAction
-      );
-
-      console.log("[ReCAPTCHA] ✓ Đã lấy token thành công!");
-      console.log("[ReCAPTCHA] Token length:", token.length);
-
-      await page.close();
-
+      console.log(`[ElectronSolver] => OK (${token.length} chars)`);
+      
+      this.close();
       return token;
+
     } catch (error) {
-      console.error("[ReCAPTCHA] ❌ Lỗi:", error.message);
-
-      if (page) {
-        await page.close();
-      }
-
-      throw error;
+      console.error("[ElectronSolver] Lỗi:", error.message);
+      this.close();
+      return null; 
     }
   }
 
-  /**
-   * Đóng browser
-   */
   async close() {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      console.log("[ReCAPTCHA] Browser đã đóng");
+    if (this.solverWindow && !this.solverWindow.isDestroyed()) {
+      this.solverWindow.destroy();
+      this.solverWindow = null;
     }
   }
 }
 
-// ============================================
-// CÁCH SỬ DỤNG
-// ============================================
-
-async function example() {
-  const solver = new RecaptchaSolver();
-
-  try {
-    console.log("\n=================================");
-    console.log("🚀 Bắt đầu lấy token reCAPTCHA v3...");
-    console.log("=================================\n");
-
-    const token = await solver.getRecaptchaToken(
-      "https://labs.google", // Website URL
-      "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV", // Site Key
-      "FLOW_GENERATION" // Action
-    );
-
-    console.log("\n=================================");
-    console.log("✅ TOKEN RECAPTCHA:");
-    console.log("=================================");
-    console.log(token);
-    console.log("=================================\n");
-
-    // Đóng browser
-    await solver.close();
-
-    return token;
-  } catch (error) {
-    console.error("\n❌ LỖI:", error.message);
-    await solver.close();
-  }
-}
-
-// Export
 module.exports = RecaptchaSolver;
-
-// Test ngay khi chạy file
-if (require.main === module) {
-  example();
-}

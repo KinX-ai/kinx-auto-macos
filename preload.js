@@ -97,5 +97,4 @@ d.exposeInMainWorld("electronAPI", {
     o.invoke("gemini:poll-video-operation", operationName, apiKey),
   geminiDownloadVideo: (videoUri, apiKey) =>
     o.invoke("gemini:download-video", videoUri, apiKey),
-  upscaleVideo: (e) => o.invoke("video:upscale", e),
 });
